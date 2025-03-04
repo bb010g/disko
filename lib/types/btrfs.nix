@@ -43,6 +43,32 @@ let
                 description = "Path to the swap file (relative to the mountpoint)";
               };
 
+              mountpoint = lib.mkOption {
+                type = lib.types.nullOr diskoLib.optionTypes.absolute-pathname;
+                internal = true;
+                description = "Path to the swap file (absolute).";
+                default = if parent._mountpoint != null then "${parent._mountpoint}/${config.path}" else null;
+              };
+
+              discardPolicy = lib.mkOption {
+                default = null;
+                example = "once";
+                type = lib.types.nullOr (
+                  lib.types.enum [
+                    "once"
+                    "pages"
+                    "both"
+                  ]
+                );
+                description = ''
+                  Specify the discard policy for the swap device. If "once", then the
+                  whole swap space is discarded at swapon invocation. If "pages",
+                  asynchronous discard on freed pages is performed, before returning to
+                  the available pages pool. With "both", both policies are activated.
+                  See swapon(8) for more information.
+                '';
+              };
+
               priority = lib.mkOption {
                 type = lib.types.nullOr lib.types.int;
                 default = null;
@@ -75,6 +101,30 @@ let
                 prefixed = true;
                 default = {
                   fs = {
+                    ${if parent.mountpoint != null then config.mountpoint else null} = ''
+                      ${lib.strings.toShellVars {
+                        inherit rootMountPoint;
+                      }}
+                      declare -a btrfs_swap__optionArgs=()
+                      case "$btrfs_swap__discardPolicy" in
+                        'both') btrfs_swap__optionArgs+=(--discard) ;;
+                        ?*) btrfs_swap__optionArgs+=(--discard="$btrfs_swap__discardPolicy") ;;
+                      esac
+                      case "$btrfs_swap__priority" in
+                        ?*) btrfs_swap__optionArgs+=(--priority="$btrfs_swap__priority") ;;
+                      esac
+                      btrfs_swap__optionArg='''
+                      for btrfs_swap__option in "''${btrfs_swap__options[@]}"; do
+                        case "$btrfs_swap__optionArg" in
+                          ''') btrfs_swap__optionArg+="$btrfs_swap__option" ;;
+                          ?*) btrfs_swap__optionArg+=",$btrfs_swap__option" ;;
+                        esac
+                      done
+                      btrfs_swap__optionArgs+=("--options=$btrfs_swap__optionArg")
+                      if test "''${DISKO_SKIP_SWAP:-}" != 1 && ! swapon --show | grep -q "^$(readlink -f "$rootMountPoint$btrfs_swap__mountpoint") "; then
+                        swapon "''${btrfs_swap__optionArgs[@]}" "$rootMountPoint$btrfs_swap__mountpoint"
+                      fi
+                    '';
                   };
                 };
               };
@@ -84,6 +134,14 @@ let
                 prefixed = true;
                 default = {
                   fs = {
+                    ${if config.mountpoint == null then config.mountpoint else null} = ''
+                      ${lib.strings.toShellVars {
+                        inherit rootMountPoint;
+                      }}
+                      if swapon --show | grep -q "^$(readlink -f "$rootMountPoint$btrfs_swap__mountpoint") "; then
+                        swapoff "$rootMountPoint$btrfs_swap__mountpoint"
+                      fi
+                    '';
                   };
                 };
               };
@@ -95,8 +153,8 @@ let
                   {
                     swapDevices = [
                       {
-                        device = "${parent.mountpoint}/${config.path}";
-                        inherit (config) priority options;
+                        device = config.mountpoint;
+                        inherit (config) discardPolicy priority options;
                       }
                     ];
                   }
@@ -172,6 +230,18 @@ in
                 type = lib.types.nullOr diskoLib.optionTypes.absolute-pathname;
                 default = null;
                 description = "Location to mount the subvolume to.";
+              };
+              _mountpoint = lib.mkOption {
+                type = lib.types.nullOr diskoLib.optionTypes.absolute-pathname;
+                default =
+                  if config.mountpoint != null then
+                    config.mountpoint
+                  else if parent._mountpoint != null then
+                    "${parent._mountpoint}/${config.name}"
+                  else
+                    null;
+                description = "Location to mount the subvolume to.";
+                internal = true;
               };
               swap = swapType { parent = config; };
               _create = diskoLib.mkCreateOption {
@@ -267,6 +337,12 @@ in
       type = lib.types.nullOr diskoLib.optionTypes.absolute-pathname;
       default = null;
       description = "A path to mount the BTRFS filesystem to.";
+    };
+    _mountpoint = lib.mkOption {
+      type = lib.types.nullOr diskoLib.optionTypes.absolute-pathname;
+      default = config.mountpoint;
+      description = "A path to mount the BTRFS filesystem to.";
+      internal = true;
     };
     swap = swapType { parent = config; };
     _parent = lib.mkOption {
