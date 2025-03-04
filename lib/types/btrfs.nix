@@ -60,10 +60,14 @@ let
     };
 
   swapCreate =
-    mountpoint: swap:
+    swap:
     lib.concatMapStringsSep "\n" (file: ''
-      if ! test -e "${mountpoint}/${file.path}"; then
-        btrfs filesystem mkswapfile --size ${file.size} "${mountpoint}/${file.path}"
+      ${lib.strings.toShellVars {
+        btrfs_swap__path = file.path;
+        btrfs_swap__size = file.size;
+      }}
+      if ! test -e "$btrfs_swap__MNTPOINT/$btrfs_swap__path"; then
+        btrfs filesystem mkswapfile --size "$btrfs_swap__size" "$btrfs_swap__MNTPOINT/$btrfs_swap__path"
       fi
     '') (lib.attrValues swap);
 
@@ -151,18 +155,18 @@ in
       inherit config options;
       default = ''
         # create the filesystem only if the device seems empty
-        if ! (blkid "${config.device}" -o export | grep -q '^TYPE='); then
-          mkfs.btrfs "${config.device}" ${toString config.extraArgs}
+        if ! (blkid "$device" -o export | grep -q '^TYPE='); then
+          mkfs.btrfs "$device" "''${extraArgs[@]}"
         fi
         ${lib.optionalString (config.swap != { } || config.subvolumes != { }) ''
-          if (blkid "${config.device}" -o export | grep -q '^TYPE=btrfs$'); then
+          if (blkid "$device" -o export | grep -q '^TYPE=btrfs$'); then
             ${lib.optionalString (config.swap != { }) (
               diskoLib.indent ''
                 (
-                  MNTPOINT=$(mktemp -d)
-                  mount ${device} "$MNTPOINT" -o subvol=/
-                  trap 'umount $MNTPOINT; rm -rf $MNTPOINT' EXIT
-                  ${diskoLib.indent (swapCreate "$MNTPOINT" config.swap)}
+                  btrfs_swap__MNTPOINT=$(mktemp -d)
+                  mount "$device" "$btrfs_swap__MNTPOINT" -o subvol=/
+                  trap 'umount "$btrfs_swap__MNTPOINT"; rm -rf "$btrfs_swap__MNTPOINT"' EXIT
+                  ${diskoLib.indent (swapCreate config.swap)}
                 )
               ''
             )}
@@ -170,15 +174,22 @@ in
               subvol:
               diskoLib.indent ''
                 (
-                  MNTPOINT=$(mktemp -d)
-                  mount "${config.device}" "$MNTPOINT" -o subvol=/
-                  trap 'umount $MNTPOINT; rm -rf $MNTPOINT' EXIT
-                  SUBVOL_ABS_PATH="$MNTPOINT/${subvol.name}"
-                  mkdir -p "$(dirname "$SUBVOL_ABS_PATH")"
-                  if ! btrfs subvolume show "$SUBVOL_ABS_PATH" > /dev/null 2>&1; then
-                    btrfs subvolume create "$SUBVOL_ABS_PATH" ${toString subvol.extraArgs}
+                  ${diskoLib.indent (
+                    lib.strings.toShellVars {
+                      btrfs_subvol__name = subvol.name;
+                      btrfs_subvol__extraArgs = subvol.extraArgs;
+                    }
+                  )}
+                  btrfs_subvol__MNTPOINT=$(mktemp -d)
+                  mount "$device" "$btrfs_subvol__MNTPOINT" -o subvol=/
+                  trap 'umount "$btrfs_subvol__MNTPOINT"; rm -rf "$btrfs_subvol__MNTPOINT"' EXIT
+                  btrfs_subvol__ABS_PATH="$btrfs_subvol__MNTPOINT/$btrfs_subvol__name"
+                  mkdir -p "$(dirname "$btrfs_subvol__ABS_PATH")"
+                  if ! btrfs subvolume show "$btrfs_subvol__ABS_PATH" > /dev/null 2>&1; then
+                    btrfs subvolume create "$btrfs_subvol__ABS_PATH" "''${btrfs_subvol__extraArgs[@]}"
                   fi
-                  ${diskoLib.indent (swapCreate "$SUBVOL_ABS_PATH" subvol.swap)}
+                  btrfs_swap__MNTPOINT="$btrfs_subvol__ABS_PATH"
+                  ${diskoLib.indent (swapCreate subvol.swap)}
                 )
               ''
             ) (lib.attrValues config.subvolumes)}
@@ -202,12 +213,19 @@ in
               (subvol.mountpoint != null)
               {
                 ${subvol.mountpoint} = ''
-                  if ! findmnt "${config.device}" "${rootMountPoint}${subvol.mountpoint}" > /dev/null 2>&1; then
-                    mount "${config.device}" "${rootMountPoint}${subvol.mountpoint}" \
-                    ${
-                      lib.concatMapStringsSep " " (opt: "-o ${opt}") (subvol.mountOptions ++ [ "subvol=${subvol.name}" ])
-                    } \
-                    -o X-mount.mkdir
+                  ${lib.strings.toShellVars {
+                    inherit rootMountPoint;
+                    btrfs_subvol__mountOptions = subvol.mountOptions;
+                    btrfs_subvol__mountpoint = subvol.mountpoint;
+                    btrfs_subvol__name = subvol.name;
+                  }}
+                  declare -a btrfs_subvol__mountOptionArgs=()
+                  for btrfs_subvol__mountOption in "''${btrfs_subvol__mountOptions[@]}"; do
+                    btrfs_subvol__mountOptionArgs+=(-o "$btrfs_subvol__mountOption")
+                  done
+                  if ! findmnt "$device" "$rootMountPoint$btrfs_subvol__mountpoint" > /dev/null 2>&1; then
+                    mount "$device" "$rootMountPoint$btrfs_subvol__mountpoint" \
+                    "''${btrfs_subvol__mountOptionArgs[@]}" -o "subvol=$btrfs_subvol__name" -o X-mount.mkdir
                   fi
                 '';
               }
@@ -218,10 +236,16 @@ in
             subvolMounts
             // lib.optionalAttrs (config.mountpoint != null) {
               ${config.mountpoint} = ''
-                if ! findmnt "${config.device}" "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
-                  mount "${config.device}" "${rootMountPoint}${config.mountpoint}" \
-                  ${lib.concatMapStringsSep " " (opt: "-o ${opt}") config.mountOptions} \
-                  -o X-mount.mkdir
+                ${lib.strings.toShellVars {
+                  inherit rootMountPoint;
+                }}
+                declare -a mountOptionArgs=()
+                for mountOption in "''${mountOptions[@]}"; do
+                  mountOptionArgs+=(-o "$mountOption")
+                done
+                if ! findmnt "$device" "$rootMountPoint$mountpoint" > /dev/null 2>&1; then
+                  mount "$device" "$rootMountPoint$mountpoint" \
+                  "''${mountOptionArgs[@]}" -o X-mount.mkdir
                 fi
               '';
             };
@@ -235,8 +259,12 @@ in
             _: subvol:
             lib.optionalAttrs (subvol.mountpoint != null) {
               ${subvol.mountpoint} = ''
-                if findmnt "${config.device}" "${rootMountPoint}${subvol.mountpoint}" > /dev/null 2>&1; then
-                  umount "${rootMountPoint}${subvol.mountpoint}"
+                ${lib.strings.toShellVars {
+                  inherit rootMountPoint;
+                  btrfs_subvol__mountpoint = subvol.mountpoint;
+                }}
+                if findmnt "$device" "$rootMountPoint$btrfs_subvol__mountpoint" > /dev/null 2>&1; then
+                  umount "$rootMountPoint$btrfs_subvol__mountpoint"
                 fi
               '';
             }
@@ -247,8 +275,11 @@ in
             subvolMounts
             // lib.optionalAttrs (config.mountpoint != null) {
               ${config.mountpoint} = ''
-                if findmnt "${config.device}" "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
-                  umount "${rootMountPoint}${config.mountpoint}"
+                ${lib.strings.toShellVars {
+                  inherit rootMountPoint;
+                }}
+                if findmnt "$device" "$rootMountPoint$mountpoint" > /dev/null 2>&1; then
+                  umount "$rootMountPoint$mountpoint"
                 fi
               '';
             };
