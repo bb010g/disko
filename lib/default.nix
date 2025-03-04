@@ -394,8 +394,12 @@ let
       subset of config variables as a shell script snippet.
     */
     defineHookVariables =
-      { options }:
+      {
+        options,
+        prefixed ? false,
+      }:
       let
+        prefix = if prefixed then "${options.type.value}__" else "";
         sanitizeName = lib.replaceStrings [ "-" ] [ "_" ];
         isAttrsOfSubmodule = o: o.type.name == "attrsOf" && o.type.nestedTypes.elemType.name == "submodule";
         isSerializable =
@@ -413,7 +417,7 @@ let
           );
       in
       lib.toShellVars (
-        lib.mapAttrs' (n: o: lib.nameValuePair (sanitizeName n) o.value) (
+        lib.mapAttrs' (n: o: lib.nameValuePair (prefix + sanitizeName n) o.value) (
           lib.filterAttrs isSerializable options
         )
       );
@@ -451,6 +455,7 @@ let
         config,
         options,
         default,
+        prefixed ? false,
       }@attrs:
       lib.mkOption {
         internal = true;
@@ -468,7 +473,7 @@ let
             }''
             (
               diskoLib.concatLines' [
-                (diskoLib.defineHookVariables { inherit options; })
+                (diskoLib.defineHookVariables { inherit options prefixed; })
                 config.preCreateHook
                 attrs.default
                 config.postCreateHook
@@ -482,6 +487,7 @@ let
         config,
         options,
         default,
+        prefixed ? false,
       }@attrs:
       lib.mkOption {
         internal = true;
@@ -492,7 +498,7 @@ let
           if builtins.isString value then
             diskoLib.subshell null (
               diskoLib.concatLines' [
-                (diskoLib.defineHookVariables { inherit options; })
+                (diskoLib.defineHookVariables { inherit options prefixed; })
                 config.preMountHook
                 value
                 config.postMountHook
@@ -509,6 +515,7 @@ let
         config,
         options,
         default,
+        prefixed ? false,
       }@attrs:
       lib.mkOption {
         internal = true;
@@ -519,7 +526,7 @@ let
           if builtins.isString value then
             diskoLib.subshell null (
               diskoLib.concatLines' [
-                (diskoLib.defineHookVariables { inherit options; })
+                (diskoLib.defineHookVariables { inherit options prefixed; })
                 config.preUnmountHook
                 value
                 config.postUnmountHook
