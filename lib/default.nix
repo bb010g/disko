@@ -283,6 +283,40 @@ let
     */
     indent = lib.replaceStrings [ "\n" ] [ "\n  " ];
 
+    /*
+      subshell takes a multiline string of shell code and places it, indented by 2 spaces, in a subshell
+
+      subshell :: (null | str) -> str -> str
+
+      Example:
+      subshell null " test\nbla "
+      => " (\n  test\n  bla\n) "
+      subshell "foo" " test\nbla "
+      => " ( # foo #\n  test\n  bla\n) "
+    */
+    subshell =
+      header: shellText:
+      let
+        chars = " \t\r\n";
+        shellTextMatches = lib.strings.match "([${chars}]*)(([${chars}]*[^${chars}]+)+)([${chars}]*)" shellText;
+        trimmedShellText = lib.strings.optionalString (shellTextMatches != null) (
+          lib.lists.elemAt shellTextMatches 1
+        );
+        leadingSpace = lib.lists.elemAt shellTextMatches 0;
+        trailingSpace = lib.lists.elemAt shellTextMatches 3;
+        header' = if header == null then "" else " # ${header} #";
+      in
+      if trimmedShellText == "" then
+        ""
+      else
+        "${leadingSpace}(${header'}\n  ${diskoLib.indent trimmedShellText}\n)${trailingSpace}";
+
+    concatLines' =
+      lines: lib.strings.concatMapStringsSep "\n" (line: lib.strings.removeSuffix "\n" line) lines;
+
+    concatMapLines' =
+      f: lines: lib.strings.concatMapStringsSep "\n" (line: lib.strings.removeSuffix "\n" (f line)) lines;
+
     # A nix option type representing a json datastructure, vendored from nixpkgs to avoid dependency on pkgs
     jsonType =
       let
@@ -422,21 +456,24 @@ let
         internal = true;
         readOnly = true;
         type = lib.types.str;
-        default = ''
-          ( # ${config.type} ${
-            lib.concatMapStringsSep " " (n: toString (config.${n} or "")) [
-              "name"
-              "device"
-              "format"
-              "mountpoint"
-            ]
-          } #
-            ${diskoLib.indent (diskoLib.defineHookVariables { inherit options; })}
-            ${diskoLib.indent config.preCreateHook}
-            ${diskoLib.indent attrs.default}
-            ${diskoLib.indent config.postCreateHook}
-          )
-        '';
+        default =
+          diskoLib.subshell
+            ''${config.type} ${
+              lib.concatMapStringsSep " " (n: toString (config.${n} or "")) [
+                "name"
+                "device"
+                "format"
+                "mountpoint"
+              ]
+            }''
+            (
+              diskoLib.concatLines' [
+                (diskoLib.defineHookVariables { inherit options; })
+                config.preCreateHook
+                attrs.default
+                config.postCreateHook
+              ]
+            );
         description = "Creation script";
       };
 
@@ -453,14 +490,14 @@ let
         default = lib.mapAttrsRecursive (
           _name: value:
           if builtins.isString value then
-            ''
-              (
-                ${diskoLib.indent (diskoLib.defineHookVariables { inherit options; })}
-                ${diskoLib.indent config.preMountHook}
-                ${diskoLib.indent value}
-                ${diskoLib.indent config.postMountHook}
-              )
-            ''
+            diskoLib.subshell null (
+              diskoLib.concatLines' [
+                (diskoLib.defineHookVariables { inherit options; })
+                config.preMountHook
+                value
+                config.postMountHook
+              ]
+            )
           else
             value
         ) attrs.default;
@@ -480,14 +517,14 @@ let
         default = lib.mapAttrsRecursive (
           _name: value:
           if builtins.isString value then
-            ''
-              (
-                ${diskoLib.indent (diskoLib.defineHookVariables { inherit options; })}
-                ${diskoLib.indent config.preUnmountHook}
-                ${diskoLib.indent value}
-                ${diskoLib.indent config.postUnmountHook}
-              )
-            ''
+            diskoLib.subshell null (
+              diskoLib.concatLines' [
+                (diskoLib.defineHookVariables { inherit options; })
+                config.preUnmountHook
+                value
+                config.postUnmountHook
+              ]
+            )
           else
             value
         ) attrs.default;
