@@ -360,11 +360,9 @@ in
           pkgs.systemdMinimal
           pkgs.parted # for partprobe
         ]
-        ++ lib.flatten (
-          map (partition: lib.optional (partition.content != null) (partition.content._pkgs pkgs)) (
-            lib.attrValues config.partitions
-          )
-        );
+        ++ lib.lists.concatMap (
+          partition: lib.lists.optionals (partition.content != null) (partition.content._pkgs pkgs)
+        ) (lib.attrValues config.partitions);
       description = "Packages";
     };
   };

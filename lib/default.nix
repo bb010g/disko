@@ -690,7 +690,7 @@ let
               currently used for building a dependency list so we know in which order to create the devices
             '';
             default = diskoLib.deepMergeMap (dev: dev._meta) (
-              lib.flatten (map lib.attrValues (lib.attrValues devices))
+              lib.lists.concatMap lib.attrValues (lib.attrValues devices)
             );
           };
           _packages = lib.mkOption {
@@ -703,7 +703,7 @@ let
               pkgs:
               with lib;
               unique (
-                (flatten (map (dev: dev._pkgs pkgs) (flatten (map attrValues (attrValues devices)))))
+                (flatten (map (dev: dev._pkgs pkgs) (lib.lists.concatMap attrValues (attrValues devices))))
                 ++ [ pkgs.coreutils-full ]
               );
           };
@@ -978,7 +978,7 @@ let
               with lib;
               let
                 fsMounts = diskoLib.deepMergeMap (dev: dev._mount.fs or { }) (
-                  flatten (map attrValues (attrValues devices))
+                  lib.lists.concatMap attrValues (attrValues devices)
                 );
                 sortedDeviceList = diskoLib.sortDevicesByDependencies (cfg.config._meta.deviceDependencies or { }
                 ) devices;
@@ -1002,7 +1002,7 @@ let
               with lib;
               let
                 fsMounts = diskoLib.deepMergeMap (dev: dev._unmount.fs or { }) (
-                  flatten (map attrValues (attrValues devices))
+                  lib.lists.concatMap attrValues (attrValues devices)
                 );
                 sortedDeviceList = diskoLib.sortDevicesByDependencies (cfg.config._meta.deviceDependencies or { }
                 ) devices;
@@ -1062,10 +1062,12 @@ let
             default =
               with lib;
               let
-                configKeys = flatten (
-                  map attrNames (flatten (map (dev: dev._config) (flatten (map attrValues (attrValues devices)))))
+                configKeys = lib.lists.concatMap attrNames (
+                  flatten (map (dev: dev._config) (lib.lists.concatMap attrValues (attrValues devices)))
                 );
-                collectedConfigs = flatten (map (dev: dev._config) (flatten (map attrValues (attrValues devices))));
+                collectedConfigs = flatten (
+                  map (dev: dev._config) (lib.lists.concatMap attrValues (attrValues devices))
+                );
               in
               genAttrs configKeys (key: mkMerge (catAttrs key collectedConfigs));
           };
