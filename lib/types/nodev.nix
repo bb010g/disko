@@ -23,6 +23,12 @@
       default = "none";
       description = "Device to use";
     };
+    mountedDevice = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      example = true;
+      description = "Whether `device` comes from a mount";
+    };
     mountpoint = lib.mkOption {
       type = lib.types.nullOr diskoLib.optionTypes.absolute-pathname;
       default = config._module.args.name;
@@ -35,9 +41,14 @@
     };
     _meta = lib.mkOption {
       internal = true;
-      readOnly = true;
       type = diskoLib.jsonType;
-      default = { };
+      default = {
+        fsMountDependencies =
+          lib.attrsets.optionalAttrs (config.mountpoint != null && config.mountedDevice)
+            {
+              ${config.mountpoint} = [ config.device ];
+            };
+      };
       description = "Metadata";
     };
     _create = diskoLib.mkCreateOption {
@@ -48,8 +59,8 @@
       inherit config options;
       default = lib.optionalAttrs (config.mountpoint != null) {
         fs.${config.mountpoint} = ''
-          if ! findmnt ${config.fsType} "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
-            mount -t ${config.fsType} "${config.device}" "${rootMountPoint}${config.mountpoint}" \
+          if ! findmnt --types ${config.fsType} "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
+            mount -t ${config.fsType} "${lib.strings.optionalString config.mountedDevice rootMountPoint}${config.device}" "${rootMountPoint}${config.mountpoint}" \
             ${lib.concatMapStringsSep " " (opt: "-o ${opt}") config.mountOptions} \
             -o X-mount.mkdir
           fi
@@ -60,7 +71,7 @@
       inherit config options;
       default = lib.optionalAttrs (config.mountpoint != null) {
         fs.${config.mountpoint} = ''
-          if findmnt ${config.fsType} "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
+          if findmnt --types ${config.fsType} "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
             umount "${rootMountPoint}${config.mountpoint}"
           fi
         '';

@@ -423,7 +423,7 @@ in
           pkgs.gnugrep
           pkgs.util-linux
         ]
-        ++ lib.flatten (map (dataset: dataset._pkgs pkgs) (lib.attrValues config.datasets));
+        ++ lib.lists.concatMap (dataset: dataset._pkgs pkgs) (lib.attrValues config.datasets);
       description = "Packages";
     };
   };

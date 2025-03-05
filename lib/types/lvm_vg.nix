@@ -208,8 +208,8 @@ in
       type = lib.types.functionTo (lib.types.listOf lib.types.package);
       default =
         pkgs:
-        lib.flatten (
-          map (lv: lib.optional (lv.content != null) (lv.content._pkgs pkgs)) (lib.attrValues config.lvs)
+        lib.lists.concatMap (lv: lib.lists.optionals (lv.content != null) (lv.content._pkgs pkgs)) (
+          lib.attrValues config.lvs
         );
       description = "Packages";
     };

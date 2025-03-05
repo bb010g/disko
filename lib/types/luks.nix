@@ -201,6 +201,7 @@ in
               cryptsetup close "${config.name}"
             fi
           '';
+          fs = lib.optionalAttrs (config.content != null) contentUnmount.fs or { };
         };
     };
     _config = lib.mkOption {
