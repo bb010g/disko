@@ -23,6 +23,13 @@
       default = "none";
       description = "Device to use";
     };
+    mountDevice = lib.mkOption {
+      type = lib.types.str;
+      description = "Device to use when mounting";
+      default = config.device;
+      defaultText = lib.options.literalExpression ''nodevConfig.device'';
+      example = lib.options.literalExpression ''rootMountPoint + nodevConfig.device'';
+    };
     mountpoint = lib.mkOption {
       type = lib.types.nullOr diskoLib.optionTypes.absolute-pathname;
       default = config._module.args.name;
@@ -35,7 +42,6 @@
     };
     _meta = lib.mkOption {
       internal = true;
-      readOnly = true;
       type = diskoLib.jsonType;
       default = { };
       description = "Metadata";
@@ -49,7 +55,7 @@
       default = lib.optionalAttrs (config.mountpoint != null) {
         fs.${config.mountpoint} = ''
           if ! findmnt ${config.fsType} "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
-            mount -t ${config.fsType} "${config.device}" "${rootMountPoint}${config.mountpoint}" \
+            mount -t ${config.fsType} "${config.mountDevice}" "${rootMountPoint}${config.mountpoint}" \
             ${lib.concatMapStringsSep " " (opt: "-o ${opt}") config.mountOptions} \
             -o X-mount.mkdir
           fi
