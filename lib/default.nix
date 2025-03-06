@@ -1046,70 +1046,200 @@ let
     # render types into an json serializable format
     serializeType =
       type:
-      let
-        options = lib.filter (x: !lib.hasPrefix "_" x) (lib.attrNames type.options);
-      in
-      lib.listToAttrs (map (option: lib.nameValuePair option type.options.${option}) options);
+      if type._type or null == "option-type" then
+        type
+        // {
+          ${if type ? subOptions then "subOptions" else null} = lib.attrsets.listToAttrs (
+            lib.lists.concatMap (
+              name:
+              lib.lists.optional
+                (!(lib.strings.hasPrefix "_" name) && !(type.subOptions.${name}.internal or false))
+                {
+                  inherit name;
+                  value = diskoLib.serializeType type.subOptions.${name};
+                }
+            ) (lib.attrsets.attrNames type.subOptions)
+          );
+          ${if type ? subType then "subType" else null} = diskoLib.serializeType type.subType;
+        }
+      else if type._type or null == "option" then
+        if type ? defaultText then
+          lib.attrsets.removeAttrs type [ "default" ]
+        else
+          type
+          // {
+            ${if type ? type then "type" else null} = diskoLib.serializeType type.type;
+          }
+      else if lib.attrsets.isAttrs type then
+        lib.attrsets.listToAttrs (
+          lib.lists.concatMap (
+            name:
+            lib.lists.optional (!(type.${name}._type or null == "option" && type.${name}.internal or false)) {
+              inherit name;
+              value = diskoLib.serializeType type;
+            }
+          ) (lib.attrsets.attrNames type)
+        )
+      else
+        type;
 
-    typesSerializerLib = {
-      rootMountPoint = "";
-      options = null;
-      config = {
-        _module = {
-          args.name = "<self.name>";
-          args._parent.name = "<parent.name>";
-          args._parent.type = "<parent.type>";
-        };
-        name = "<config.name>";
-      };
-      parent = { };
-      device = "/dev/<device>";
-      # Spoof part of nixpkgs/lib to analyze the types
+    _typesSerializer = {
       lib = lib // {
-        mkOption = option: {
-          inherit (option) type;
-          description = option.description or null;
-          default = option.defaultText or option.default or null;
-        };
+        mkOption =
+          option:
+          {
+            _type = "option";
+          }
+          // lib.attrsets.intersectAttrs {
+            type = null;
+            description = null;
+            default = null;
+            defaultText = null;
+            internal = null;
+          } option;
+        mkOptionType =
+          typeArgs@{ name, ... }:
+          {
+            _type = "option-type";
+          }
+          // typeArgs;
         types = {
-          attrsOf = subType: {
-            type = "attrsOf";
-            inherit subType;
+          attrsOf =
+            subType:
+            diskoLib._typesSerializer.lib.mkOptionType {
+              name = "attrsOf";
+              inherit subType;
+            };
+          listOf =
+            subType:
+            diskoLib._typesSerializer.lib.mkOptionType {
+              _type = "option-type";
+              name = "listOf";
+              inherit subType;
+            };
+          nullOr =
+            subType:
+            diskoLib._typesSerializer.lib.mkOptionType {
+              _type = "option-type";
+              name = "nullOr";
+              inherit subType;
+            };
+          oneOf =
+            types:
+            diskoLib._typesSerializer.lib.mkOptionType {
+              _type = "option-type";
+              name = "oneOf";
+              inherit types;
+            };
+          either =
+            t1: t2:
+            diskoLib._typesSerializer.lib.mkOptionType {
+              _type = "option-type";
+              name = "oneOf";
+              types = [
+                t1
+                t2
+              ];
+            };
+          enum =
+            choices:
+            diskoLib._typesSerializer.lib.mkOptionType {
+              _type = "option-type";
+              name = "enum";
+              inherit choices;
+            };
+          anything = diskoLib._typesSerializer.lib.mkOptionType {
+            _type = "option-type";
+            name = "anything";
           };
-          listOf = subType: {
-            type = "listOf";
-            inherit subType;
+          nonEmptyStr = diskoLib._typesSerializer.lib.mkOptionType {
+            _type = "option-type";
+            name = "str";
           };
-          nullOr = subType: {
-            type = "nullOr";
-            inherit subType;
+          strMatching =
+            _:
+            diskoLib._typesSerializer.lib.mkOptionType {
+              _type = "option-type";
+              name = "str";
+            };
+          str = diskoLib._typesSerializer.lib.mkOptionType {
+            name = "str";
           };
-          oneOf = types: {
-            type = "oneOf";
-            inherit types;
+          bool = diskoLib._typesSerializer.lib.mkOptionType {
+            name = "bool";
           };
-          either = t1: t2: {
-            type = "oneOf";
-            types = [
-              t1
-              t2
-            ];
+          int = diskoLib._typesSerializer.lib.mkOptionType {
+            name = "int";
           };
-          enum = choices: {
-            type = "enum";
-            inherit choices;
-          };
-          anything = "anything";
-          nonEmptyStr = "str";
-          strMatching = _: "str";
-          str = "str";
-          bool = "bool";
-          int = "int";
           submodule =
-            x:
-            x {
-              inherit (diskoLib.typesSerializerLib) lib config options;
-              name = "<self.name>";
+            modules:
+            let
+              mergedModule = lib.lists.foldl' (
+                partiallyMergedModule: module:
+                let
+                  args = {
+                    inherit (diskoLib._typesSerializer) lib;
+                    inherit (mergedModule) options config;
+                  } // partiallyMergedModule.config._module.specialArgs;
+                  moduleFunction = lib.trivial.toFunction module;
+                  context = name: ''while evaluating the module argument `${name}':'';
+                  extraArgs = lib.attrsets.mapAttrs (
+                    name: _:
+                    lib.addErrorContext (context name) (args.${name} or mergedModule.config._module.args.${name})
+                  ) (lib.trivial.functionArgs moduleFunction);
+                  module' = moduleFunction (args // extraArgs);
+                  mergeOptions =
+                    partiallyMergedOptions: options:
+                    lib.attrsets.mapAttrs (
+                      name: option:
+                      if option._type or null == "option" then
+                        option
+                      else if lib.attrsets.isAttrs option then
+                        mergeOptions partiallyMergedOptions.${name} options.${name}
+                      else
+                        option
+                    ) (partiallyMergedOptions // options);
+                  partiallyMergedOptions = mergeOptions partiallyMergedModule.options module'.options or { };
+                  addDefaultsToConfig =
+                    partiallyMergedOptions: options: partiallyMergedConfig: config:
+                    lib.attrsets.mapAttrs (
+                      name: value:
+                      let
+                        option = partiallyMergedOptions.${name};
+                      in
+                      if partiallyMergedOptions ? ${name} then
+                        if option._type or null == "option" then
+                          config.${name} or partiallyMergedConfig.${name} or option.default
+                        else
+                          addDefaultsToConfig option options.${name} or { } partiallyMergedConfig.${name} or { }
+                            config.${name} or { }
+                      else
+                        value
+                    ) (options // partiallyMergedConfig // config);
+                in
+                partiallyMergedModule
+                // module'
+                // {
+                  options = partiallyMergedOptions;
+                  config =
+                    addDefaultsToConfig partiallyMergedOptions module'.options or { } partiallyMergedModule.config
+                      module'.config or { }
+                    // {
+                      _module =
+                        partiallyMergedModule.config._module
+                        // module'.config._module or { }
+                        // {
+                          inherit (partiallyMergedModule.config._module) specialArgs;
+                          args = partiallyMergedModule.config._module.args // module'.config._module.args or { };
+                        };
+                    };
+                }
+              ) diskoLib._typesSerializer.initialModule (lib.lists.toList modules);
+            in
+            diskoLib._typesSerializer.lib.mkOptionType {
+              name = "submodule";
+              subOptions = mergedModule.options;
+              freeformType = mergedModule._module.freeformType or null;
             };
         };
       };
@@ -1120,30 +1250,64 @@ let
         partitionType = _: "<partitionType>";
         subType =
           { types, ... }:
-          {
-            type = "oneOf";
+          diskoLib._typesSerializer.lib.mkOptionType {
+            name = "oneOf";
             types = lib.attrNames types;
           };
-        mkCreateOption = option: "_create";
+        mkCreateOption = _: "_create";
+        mkMountOption = _: "_mount";
+        mkUnmountOption = _: "_unmount";
+        mkSubType =
+          modules:
+          diskoLib._typesSerializer.lib.types.submodule (
+            [
+              {
+                config._module.args = {
+                  inherit (diskoLib._typesSerializer) diskoLib;
+                  rootMountPoint = "";
+                  device = "/dev/<device>";
+                };
+              }
+            ]
+            ++ lib.lists.toList modules
+          );
+      };
+      initialModule = {
+        options = { };
+        config = {
+          _module.args = {
+            name = "<self.name>";
+            parent.name = "<self.parent.name>";
+            parent.type = "<self.parent.type>";
+          };
+          _module.specialArgs = { };
+          name = "<config.name>";
+          _parent.name = "<config._parent.name>";
+          _parent.type = "<config._parent.type>";
+        };
+        # Spoof part of nixpkgs/lib to analyze the types
       };
     };
+
+    typesSerializerLib = diskoLib._typesSerializer.moduleArg;
+    typesSerializerDiskoLib = diskoLib._typesSerializer.diskoLib;
 
     jsonTypes =
       lib.listToAttrs (
         map (
           file:
           lib.nameValuePair (lib.removeSuffix ".nix" file) (
-            diskoLib.serializeType (import (./types + "/${file}") diskoLib.typesSerializerLib)
+            diskoLib.serializeType (diskoLib.typesSerializerDiskoLib.mkSubType (import (./types + "/${file}")))
           )
         ) (lib.filter (name: lib.hasSuffix ".nix" name) (lib.attrNames (builtins.readDir ./types)))
       )
       // {
-        partitionType = {
-          type = "oneOf";
+        partitionType = diskoLib._typesSerializer.lib.mkOptionType {
+          name = "oneOf";
           types = lib.attrNames diskoLib._partitionTypes;
         };
-        deviceType = {
-          type = "oneOf";
+        deviceType = diskoLib._typesSerializer.lib.mkOptionType {
+          name = "oneOf";
           types = lib.attrNames diskoLib._deviceTypes;
         };
       };
