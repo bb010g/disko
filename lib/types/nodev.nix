@@ -48,7 +48,7 @@
       inherit config options;
       default = lib.optionalAttrs (config.mountpoint != null) {
         fs.${config.mountpoint} = ''
-          if ! findmnt ${config.fsType} "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
+          if ! findmnt --types ${config.fsType} "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
             mount -t ${config.fsType} "${config.device}" "${rootMountPoint}${config.mountpoint}" \
             ${lib.concatMapStringsSep " " (opt: "-o ${opt}") config.mountOptions} \
             -o X-mount.mkdir
@@ -60,7 +60,7 @@
       inherit config options;
       default = lib.optionalAttrs (config.mountpoint != null) {
         fs.${config.mountpoint} = ''
-          if findmnt ${config.fsType} "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
+          if findmnt --types ${config.fsType} "${rootMountPoint}${config.mountpoint}" > /dev/null 2>&1; then
             umount "${rootMountPoint}${config.mountpoint}"
           fi
         '';
